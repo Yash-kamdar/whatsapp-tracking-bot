@@ -376,7 +376,7 @@ if text.startswith("history"):
         awb = text.split()[1]
     except:
         send_message(sender, "Usage:\nhistory AWB")
-        return "ok"
+    return "ok"
 
     # try database first
     row = cursor.execute(
