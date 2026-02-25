@@ -35,21 +35,24 @@ def home():
 
 def send_whatsapp_message(to, message):
 
-    url=f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
 
-    headers={
-        "Authorization":f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type":"application/json"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
     }
 
-    data={
-        "messaging_product":"whatsapp",
-        "to":to,
-        "type":"text",
-        "text":{"body":message}
+    data = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message}
     }
 
-    requests.post(url,headers=headers,json=data)
+    response = requests.post(url, headers=headers, json=data)
+
+    print("WhatsApp API Response:", response.status_code)
+    print(response.text)
 
 # ================= PROGRESS =================
 
