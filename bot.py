@@ -185,26 +185,33 @@ def verify(request:Request):
 # ================= RECEIVE =================
 
 @app.post("/webhook")
-async def receive(req:Request):
+async def receive_message(request: Request):
 
-    data=await req.json()
+    data = await request.json()
 
     try:
-        value=data["entry"][0]["changes"][0]["value"]
+        entry = data.get("entry", [])
+        changes = entry[0].get("changes", [])
+        value = changes[0].get("value", {})
 
+        # ✅ IMPORTANT FIX
         if "messages" not in value:
-            return "ok"
+            return {"status": "ignored"}   # ignore delivery/read updates
 
-        msg=value["messages"][0]
+        msg = value["messages"][0]
 
-        sender=msg["from"]
+        # ignore non text messages
+        if msg.get("type") != "text":
+            return {"status": "ignored"}
 
-        text=msg["text"]["body"].lower().strip()
+        sender = msg["from"]
+        text = msg["text"]["body"].strip().lower()
 
-    except:
-        return "ok"
+        print("Incoming:", text)
 
-    print("Incoming:",text)
+    except Exception as e:
+        print("Webhook parse error:", e)
+        return {"status": "error"}
 
 # ---------- COMMANDS ----------
 
