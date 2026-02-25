@@ -167,6 +167,7 @@ def check_updates():
                 else delhivery_track(awb)
             )
 
+            # API sometimes fails
             if not scans:
                 continue
 
@@ -184,16 +185,21 @@ def check_updates():
                 msg = (
                     f"🚚 *Shipment Update*\n\n"
                     f"AWB: {awb}\n"
-                    f"{scans[-1]}"
+                    f"📍 {scans[-1].get('location','')}\n"
+                    f"✅ {scans[-1].get('status','')}\n"
+                    f"🕒 {scans[-1].get('date','')}"
                 )
 
                 send_message(user, msg)
 
-                if "Delivered" in latest:
+                # safer delivered detection
+                if "DELIVERED" in latest.upper():
+
                     cursor.execute(
                         "DELETE FROM tracking WHERE awb=?",
                         (awb,)
                     )
+
                     conn.commit()
 
         except Exception as e:
