@@ -10,8 +10,8 @@ app = FastAPI()
 
 VERIFY_TOKEN = "shipmentbot123"
 
-ACCESS_TOKEN = os.getenv("EAA01wBtIopkBQ5OkahNmFScV5uD28AIZBXvimY3YQrwXQ1clazENoZAX4gQlqwdikCqUBo0soGCcLymZCwgP8OXvoV6PwEaZBVYTjCb0nq7vLmcqEM3V3bvC6mrx33rjkpcSRo71dgJH0RizrvMwsXAsVYWezTkUwZABGk0eEgKWn3VQxiTcy2ifkf2dGOtdUCAZDZD")
-PHONE_NUMBER_ID = os.getenv("983841231479330")
+ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 GRAPH_URL = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
 
