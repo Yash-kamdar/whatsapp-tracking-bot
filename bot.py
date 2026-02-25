@@ -9,7 +9,7 @@ app = FastAPI()
 # ================= ENV =================
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
-ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 if not ACCESS_TOKEN:
