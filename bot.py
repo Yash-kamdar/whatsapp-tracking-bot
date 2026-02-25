@@ -299,78 +299,97 @@ def verify(mode:str=None,hub_challenge:str=None,hub_verify_token:str=None):
 # ================= RECEIVE =================
 
 @app.post("/webhook")
-async def receive(req:Request):
+async def receive(req: Request):
 
-    data=await req.json()
+    data = await req.json()
 
     try:
-        value=data["entry"][0]["changes"][0]["value"]
 
-        if "messages" not in value:
-            return {"ok":True}
+        if "entry" not in data:
+            return {"ok": True}
 
-        msg=value["messages"][0]
+        change = data["entry"][0]["changes"][0]["value"]
 
-        sender=msg["from"]
+        # ignore status updates
+        if "messages" not in change:
+            return {"ok": True}
 
-        text=None
-        button=None
+        msg = change["messages"][0]
 
-        if msg["type"]=="interactive":
-            button=msg["interactive"]["button_reply"]["id"]
+        sender = msg["from"]
 
-        elif msg["type"]=="text":
-            text=msg["text"]["body"].lower()
+        text = None
+        button = None
 
-        # ===== MENU =====
+        # BUTTON CLICK
+        if msg["type"] == "interactive":
 
-        if text in ["hi","hello","menu","start"]:
+            button = msg["interactive"]["button_reply"]["id"]
+
+        # NORMAL MESSAGE
+        elif msg["type"] == "text":
+
+            text = msg["text"]["body"].lower().strip()
+
+        print("Incoming:", text, button)
+
+        # ================= MENU =================
+
+        if text in ["hi", "hello", "menu", "start"]:
             main_menu(sender)
-            return {"ok":True}
+            return {"ok": True}
 
-        if button=="track":
+        # ================= BUTTONS =================
+
+        if button == "track":
             courier_menu(sender)
-            user_state[sender]="choose"
-            return {"ok":True}
+            user_state[sender] = "choose"
+            return {"ok": True}
 
-        if button=="shipmozo":
-            user_state[sender]="shipmozo"
-            send_message(sender,"Send AWB")
-            return {"ok":True}
+        if button == "shipmozo":
+            user_state[sender] = "shipmozo"
+            send_message(sender, "📦 Send Shipmozo AWB")
+            return {"ok": True}
 
-        if button=="delhivery":
-            user_state[sender]="delhivery"
-            send_message(sender,"Send AWB")
-            return {"ok":True}
+        if button == "delhivery":
+            user_state[sender] = "delhivery"
+            send_message(sender, "🚛 Send Delhivery AWB")
+            return {"ok": True}
 
-        if button=="list":
+        if button == "list":
             list_awb(sender)
-            return {"ok":True}
+            return {"ok": True}
 
-        if button=="history":
-            send_message(sender,"Send:\nhistory AWB")
-            return {"ok":True}
+        if button == "history":
+            send_message(sender, "📜 Send:\n\nhistory AWB_NUMBER")
+            return {"ok": True}
 
-        # ===== HISTORY TEXT =====
+        # ================= HISTORY =================
 
         if text and text.startswith("history"):
-            awb=text.split(" ")[1]
-            history(sender,awb)
-            return {"ok":True}
 
-        # ===== ADD AWB =====
+            parts = text.split()
 
-        if sender in user_state:
+            if len(parts) > 1:
+                history(sender, parts[1])
 
-            service=user_state[sender]
+            return {"ok": True}
 
-            if service in ["shipmozo","delhivery"]:
+        # ================= AWB INPUT =================
 
-                add_tracking(sender,text.strip(),service)
+        if sender in user_state and text:
+
+            service = user_state[sender]
+
+            if service in ["shipmozo", "delhivery"]:
+
+                add_tracking(sender, text, service)
 
                 del user_state[sender]
 
-    except Exception as e:
-        print("Webhook error:",e)
+                return {"ok": True}
 
-    return {"ok":True}
+    except Exception as e:
+        print("Webhook ERROR:", e)
+
+    return {"ok": True}
