@@ -239,24 +239,104 @@ def verify(mode:str=None,hub_challenge:str=None,hub_verify_token:str=None):
 # ================= RECEIVE MESSAGE =================
 
 @app.post("/webhook")
-async def receive_message(request:Request):
+async def receive_message(request: Request):
 
-    data=await request.json()
+    data = await request.json()
 
     try:
-        value=data["entry"][0]["changes"][0]["value"]
+        entry = data.get("entry", [])
 
-        if "messages" not in value:
+        if not entry:
             return "ok"
 
-        msg=value["messages"][0]
+        changes = entry[0].get("changes", [])
+
+        if not changes:
+            return "ok"
+
+        value = changes[0].get("value", {})
+
+        messages = value.get("messages")
+
+        # Ignore delivery/status updates
+        if not messages:
+            return "ok"
+
+        msg = messages[0]
+
+        sender = msg.get("from")
+
+        if "text" not in msg:
+            return "ok"
+
+        text = msg["text"]["body"].lower()
+
+        print("Incoming:", text)
 
     except Exception as e:
-        print("Webhook parse error:",e)
+        print("Webhook error:", e)
         return "ok"
 
-    sender=msg["from"]
-    text=msg["text"]["body"].lower()
+    # ===== COMMANDS =====
+
+    if text == "track":
+
+        send_whatsapp_message(
+            sender,
+            "Choose service:\nshipmozo\ndelhivery"
+        )
+
+        return "ok"
+
+    if text == "list":
+
+        rows = cursor.execute(
+            "SELECT awb,service FROM tracking WHERE user=?",
+            (sender,)
+        ).fetchall()
+
+        if not rows:
+            send_whatsapp_message(sender,"No active tracking.")
+            return "ok"
+
+        message="📦 Active Shipments\n"
+
+        for awb,service in rows:
+            message+=f"{service} → {awb}\n"
+
+        send_whatsapp_message(sender,message)
+
+        return "ok"
+
+    if text.startswith("history"):
+
+        parts=text.split()
+
+        if len(parts)!=2:
+            send_whatsapp_message(sender,"history <awb>")
+            return "ok"
+
+        awb=parts[1]
+
+        result=cursor.execute(
+            "SELECT service FROM tracking WHERE awb=?",
+            (awb,)
+        ).fetchone()
+
+        if not result:
+            send_whatsapp_message(sender,"Not tracked")
+            return "ok"
+
+        service=result[0]
+
+        if service=="shipmozo":
+            shipmozo_history(sender,awb)
+        else:
+            delhivery_history(sender,awb)
+
+        return "ok"
+
+    return "ok"
 
 # ---------- TRACK ----------
 
