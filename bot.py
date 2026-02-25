@@ -79,18 +79,24 @@ def shipmozo_track(awb):
 
     data = r.json()
 
-    scans = data["data"][0]["scan"]
+    shipment = data.get("data", [])
 
-    formatted = []
+    if not shipment:
+        return []
 
-    for s in scans:
-        formatted.append({
-            "status": s.get("scan"),
-            "location": s.get("city"),
-            "date": s.get("date")
+    scans_raw = shipment[0].get("scan", [])
+
+    scans = []
+
+    for s in scans_raw:
+
+        scans.append({
+            "status": s.get("status", "").strip(),
+            "location": s.get("location", ""),
+            "date": f"{s.get('date','')} {s.get('time','')}"
         })
 
-    return formatted
+    return scans
 
 
 # ================= DELHIVERY =================
