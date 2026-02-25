@@ -420,5 +420,5 @@ async def receive(req: Request):
         send_message(sender, format_history(awb, scans))
     
         return "ok"
-
-return "ok"
+        
+    return "ok"
