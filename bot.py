@@ -370,55 +370,55 @@ async def receive(req: Request):
 
     # ---------- HISTORY ----------
 
-if text.startswith("history"):
-
-    try:
-        awb = text.split()[1]
-    except:
-        send_message(sender, "Usage:\nhistory AWB")
-        return "ok"
-
-    # try database first
-    row = cursor.execute(
-        "SELECT service FROM tracking WHERE awb=?",
-        (awb,)
-    ).fetchone()
-
-    service = None
-
-    if row:
-        service = row[0]
-
-    # auto fallback detection
-    if not service:
-
+    if text.startswith("history"):
+    
         try:
-            scans = shipmozo_track(awb)
-            if scans:
-                send_message(sender, format_history(awb, scans))
-                return "ok"
+            awb = text.split()[1]
         except:
-            pass
-
-        try:
-            scans = delhivery_track(awb)
-            if scans:
-                send_message(sender, format_history(awb, scans))
-                return "ok"
-        except:
-            pass
-
-        send_message(sender, "❌ Tracking not found")
+            send_message(sender, "Usage:\nhistory AWB")
+            return "ok"
+    
+        # try database first
+        row = cursor.execute(
+            "SELECT service FROM tracking WHERE awb=?",
+            (awb,)
+        ).fetchone()
+    
+        service = None
+    
+        if row:
+            service = row[0]
+    
+        # auto fallback detection
+        if not service:
+    
+            try:
+                scans = shipmozo_track(awb)
+                if scans:
+                    send_message(sender, format_history(awb, scans))
+                    return "ok"
+            except:
+                pass
+    
+            try:
+                scans = delhivery_track(awb)
+                if scans:
+                    send_message(sender, format_history(awb, scans))
+                    return "ok"
+            except:
+                pass
+    
+            send_message(sender, "❌ Tracking not found")
+            return "ok"
+    
+        scans = (
+            shipmozo_track(awb)
+            if service == "shipmozo"
+            else delhivery_track(awb)
+        )
+    
+        send_message(sender, format_history(awb, scans))
+    
         return "ok"
-
-    scans = (
-        shipmozo_track(awb)
-        if service == "shipmozo"
-        else delhivery_track(awb)
-    )
-
-    send_message(sender, format_history(awb, scans))
-
-    return "ok"
 
 return "ok"
