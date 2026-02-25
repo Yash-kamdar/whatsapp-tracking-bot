@@ -6,8 +6,6 @@ import os
 
 app = FastAPI()
 
-# ================= WHATSAPP =================
-
 VERIFY_TOKEN = "shipmentbot123"
 
 ACCESS_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -26,15 +24,14 @@ CREATE TABLE IF NOT EXISTS tracking(
 user TEXT,
 awb TEXT,
 service TEXT,
-last_update TEXT,
-status TEXT
+last_update TEXT
 )
 """)
 
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS user_state(
+CREATE TABLE IF NOT EXISTS state(
 user TEXT PRIMARY KEY,
-state TEXT,
+step TEXT,
 service TEXT
 )
 """)
@@ -42,7 +39,7 @@ service TEXT
 conn.commit()
 
 
-# ================= WHATSAPP SEND =================
+# ================= SEND MESSAGE =================
 
 def send_whatsapp_message(to, message):
 
@@ -55,25 +52,22 @@ def send_whatsapp_message(to, message):
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
-        "text": {
-            "preview_url": False,
-            "body": message
-        }
+        "text": {"body": message}
     }
 
     r = requests.post(GRAPH_URL, headers=headers, json=payload)
 
-    print("WhatsApp:", r.status_code, r.text)
+    print("WhatsApp:", r.status_code)
 
 
-# ================= USER STATE =================
+# ================= STATE =================
 
-def set_state(user, state, service=None):
+def set_state(user, step, service=None):
 
-    cursor.execute("""
-    INSERT OR REPLACE INTO user_state(user,state,service)
-    VALUES(?,?,?)
-    """, (user, state, service))
+    cursor.execute(
+        "INSERT OR REPLACE INTO state VALUES(?,?,?)",
+        (user, step, service)
+    )
 
     conn.commit()
 
@@ -81,118 +75,174 @@ def set_state(user, state, service=None):
 def get_state(user):
 
     cursor.execute(
-        "SELECT state,service FROM user_state WHERE user=?",
+        "SELECT step,service FROM state WHERE user=?",
         (user,)
     )
 
-    row = cursor.fetchone()
+    r = cursor.fetchone()
 
-    if row:
-        return row[0], row[1]
-
-    return None, None
+    return r if r else (None, None)
 
 
 def clear_state(user):
+
     cursor.execute(
-        "DELETE FROM user_state WHERE user=?",
+        "DELETE FROM state WHERE user=?",
         (user,)
     )
+
     conn.commit()
+
+
+# ================= SHIPMOZO =================
+
+def shipmozo_data(awb):
+
+    url=f"https://webparex.in/public/api/customer/btp/track-order?tracking_number={awb}&public_key=&type=awb_number&from=WEB"
+
+    data=requests.get(url,timeout=15).json()
+
+    info=data["data"][0]
+
+    latest=info["scan"][0]
+
+    msg=f"""
+📦 *Shipment Tracking*
+
+🚚 Courier : {info['courier']}
+📍 Status : {info['current_status']}
+📅 Expected : {info['expected_delivery_date']}
+
+━━━━━━━━━━━━━━
+
+🕒 {latest['date']} {latest['time']}
+📍 {latest['location']}
+✅ {latest['status'].strip()}
+"""
+
+    update=latest["status"]
+
+    delivered="DELIVERED" in latest["status"].upper()
+
+    return msg,update,delivered
+
+
+# ================= DELHIVERY =================
+
+def delhivery_data(awb):
+
+    headers={
+        "Origin":"https://www.delhivery.com",
+        "Referer":"https://www.delhivery.com/",
+        "User-Agent":"Mozilla/5.0"
+    }
+
+    url=f"https://dlv-api.delhivery.com/v3/unified-tracking-new?wbn={awb}"
+
+    data=requests.get(url,headers=headers,timeout=15).json()
+
+    info=data["data"][0]
+
+    status=info["status"]
+
+    msg=f"""
+📦 *Delhivery Tracking*
+
+🚛 AWB : {awb}
+📍 Status : {status['status']}
+📝 {status['instructions']}
+
+📅 Delivery :
+{info.get('deliveryDate','Updating')}
+"""
+
+    update=status["instructions"]
+
+    delivered=status["status"]=="DELIVERED"
+
+    return msg,update,delivered
 
 
 # ================= WEBHOOK VERIFY =================
 
 @app.get("/webhook")
-async def verify(request: Request):
+async def verify(request:Request):
 
-    params = request.query_params
+    qp=request.query_params
 
-    if params.get("hub.verify_token") == VERIFY_TOKEN:
-        return int(params.get("hub.challenge"))
+    if qp.get("hub.verify_token")==VERIFY_TOKEN:
+        return int(qp.get("hub.challenge"))
 
     return "error"
 
 
-# ================= RECEIVE MESSAGE =================
+# ================= RECEIVE =================
 
 @app.post("/webhook")
-async def receive_message(request: Request):
+async def receive(request:Request):
 
-    data = await request.json()
+    data=await request.json()
 
     try:
-        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        msg=data["entry"][0]["changes"][0]["value"]["messages"][0]
     except:
-        return {"status": "ok"}
+        return {"ok":True}
 
-    sender = msg["from"]
-    text = msg["text"]["body"].lower().strip()
+    sender=msg["from"]
+    text=msg["text"]["body"].lower().strip()
 
-    print("Incoming:", text)
+    step,service=get_state(sender)
 
-    state, service = get_state(sender)
+    print("Incoming:",text)
 
-    # ================= TRACK =================
 
-    if text == "track":
+# -------- TRACK --------
 
-        set_state(sender, "choose_service")
+    if text=="track":
+
+        set_state(sender,"choose")
+
+        send_whatsapp_message(sender,
+"""📦 *Start Tracking*
+
+Choose courier:
+
+🚚 shipmozo
+🚛 delhivery
+""")
+
+        return {"ok":True}
+
+
+# -------- SERVICE --------
+
+    if step=="choose":
+
+        if text not in ["shipmozo","delhivery"]:
+
+            send_whatsapp_message(sender,"❌ Choose shipmozo or delhivery")
+            return {"ok":True}
+
+        set_state(sender,"awb",text)
 
         send_whatsapp_message(
             sender,
-            "📦 *Start Tracking*\n\n"
-            "Choose courier:\n"
-            "🚚 shipmozo\n"
-            "🚛 delhivery"
-        )
-        return {"ok": True}
-
-    # ================= SERVICE =================
-
-    if state == "choose_service":
-
-        if text not in ["shipmozo", "delhivery"]:
-
-            send_whatsapp_message(
-                sender,
-                "❌ Please choose:\nshipmozo or delhivery"
-            )
-            return {"ok": True}
-
-        set_state(sender, "await_awb", text)
-
-        send_whatsapp_message(
-            sender,
-            f"✅ *{text.title()} Selected*\n\n"
-            "📦 Send Tracking Number"
+            f"✅ *{text.title()} Selected*\n\n📦 Send Tracking Number"
         )
 
-        return {"ok": True}
+        return {"ok":True}
 
-    # ================= AWB =================
 
-    if state == "await_awb":
+# -------- ADD AWB --------
 
-        awb = text
+    if step=="awb":
 
-        cursor.execute("""
-        SELECT * FROM tracking
-        WHERE user=? AND awb=?
-        """, (sender, awb))
+        awb=text
 
-        if cursor.fetchone():
-
-            send_whatsapp_message(
-                sender,
-                "⚠️ Already tracking this AWB."
-            )
-            return {"ok": True}
-
-        cursor.execute("""
-        INSERT INTO tracking
-        VALUES(?,?,?,?,?)
-        """, (sender, awb, service, "", "ACTIVE"))
+        cursor.execute(
+            "INSERT INTO tracking VALUES(?,?,?,?)",
+            (sender,awb,service,"")
+        )
 
         conn.commit()
 
@@ -200,123 +250,146 @@ async def receive_message(request: Request):
 
         send_whatsapp_message(
             sender,
-            f"✅ *Tracking Started*\n"
-            f"📦 AWB: {awb}\n"
-            f"🚚 Service: {service.title()}"
+            "⏳ Fetching shipment details..."
         )
 
-        return {"ok": True}
+        try:
 
-    # ================= LIST =================
+            if service=="shipmozo":
+                msg,update,_=shipmozo_data(awb)
+            else:
+                msg,update,_=delhivery_data(awb)
 
-    if text == "list":
+            cursor.execute(
+                "UPDATE tracking SET last_update=? WHERE awb=?",
+                (update,awb)
+            )
+
+            conn.commit()
+
+            send_whatsapp_message(sender,msg)
+
+        except Exception as e:
+
+            send_whatsapp_message(
+                sender,
+                "⚠️ Unable to fetch tracking right now."
+            )
+
+        return {"ok":True}
+
+
+# -------- LIST --------
+
+    if text=="list":
 
         cursor.execute(
             "SELECT awb,service FROM tracking WHERE user=?",
             (sender,)
         )
 
-        rows = cursor.fetchall()
+        rows=cursor.fetchall()
 
         if not rows:
-            send_whatsapp_message(
-                sender,
-                "📭 No active tracking."
-            )
-            return {"ok": True}
+            send_whatsapp_message(sender,"📭 No active shipments.")
+            return {"ok":True}
 
-        msg = "📦 *Active Shipments*\n\n"
+        msg="📦 *Active Shipments*\n\n"
 
         for r in rows:
-            msg += f"• {r[0]} ({r[1]})\n"
+            msg+=f"• {r[0]} ({r[1]})\n"
 
-        send_whatsapp_message(sender, msg)
+        send_whatsapp_message(sender,msg)
 
-        return {"ok": True}
-
-    return {"ok": True}
+        return {"ok":True}
 
 
-# ================= SHIPMOZO =================
+# -------- HISTORY --------
 
-def shipmozo_track(awb):
+    if text.startswith("history"):
 
-    url = f"https://webparex.in/public/api/customer/btp/track-order?tracking_number={awb}&public_key=&type=awb_number&from=WEB"
+        parts=text.split()
 
-    r = requests.get(url, timeout=15)
+        if len(parts)<2:
 
-    data = r.json()
+            send_whatsapp_message(
+                sender,
+                "Usage:\n history AWB"
+            )
+            return {"ok":True}
 
-    scans = data["data"][0]["scan"]
+        awb=parts[1]
 
-    latest = scans[0]
+        cursor.execute(
+            "SELECT service FROM tracking WHERE awb=?",
+            (awb,)
+        )
 
-    update = f"{latest['date']} {latest['time']} {latest['status']}"
+        r=cursor.fetchone()
 
-    delivered = "DELIVERED" in latest["status"].upper()
+        if not r:
+            send_whatsapp_message(sender,"❌ AWB not tracked.")
+            return {"ok":True}
 
-    return update, delivered
-
-
-# ================= DELHIVERY =================
-
-def delhivery_track(awb):
-
-    headers = {
-        "Origin": "https://www.delhivery.com",
-        "Referer": "https://www.delhivery.com/",
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    url = f"https://dlv-api.delhivery.com/v3/unified-tracking-new?wbn={awb}"
-
-    r = requests.get(url, headers=headers, timeout=15)
-
-    data = r.json()
-
-    status = data["data"][0]["status"]
-
-    update = f"{status['status']} - {status['instructions']}"
-
-    delivered = status["status"] == "DELIVERED"
-
-    return update, delivered
-
-
-# ================= BACKGROUND CHECK =================
-
-def check_updates():
-
-    cursor.execute(
-        "SELECT user,awb,service,last_update FROM tracking"
-    )
-
-    rows = cursor.fetchall()
-
-    for user, awb, service, last in rows:
+        service=r[0]
 
         try:
 
-            if service == "shipmozo":
-                update, delivered = shipmozo_track(awb)
+            if service=="shipmozo":
+
+                url=f"https://webparex.in/public/api/customer/btp/track-order?tracking_number={awb}&public_key=&type=awb_number&from=WEB"
+
+                scans=requests.get(url).json()["data"][0]["scan"]
+
+                msg="📜 *Shipment History*\n\n"
+
+                for s in reversed(scans):
+
+                    msg+=(
+f"""🕒 {s['date']} {s['time']}
+📍 {s['location']}
+✅ {s['status']}
+
+────────────
+""")
+
+                send_whatsapp_message(sender,msg)
+
+        except:
+
+            send_whatsapp_message(sender,"⚠️ Could not fetch history.")
+
+        return {"ok":True}
+
+    return {"ok":True}
+
+
+# ================= AUTO CHECK =================
+
+def check_updates():
+
+    cursor.execute("SELECT user,awb,service,last_update FROM tracking")
+
+    for user,awb,service,last in cursor.fetchall():
+
+        try:
+
+            if service=="shipmozo":
+                _,update,delivered=shipmozo_data(awb)
             else:
-                update, delivered = delhivery_track(awb)
+                _,update,delivered=delhivery_data(awb)
 
-            if update != last:
+            if update!=last:
 
-                message = (
-                    "🚚 *Shipment Update*\n\n"
-                    f"📦 AWB: {awb}\n"
-                    f"📍 {update}"
+                send_whatsapp_message(
+                    user,
+                    f"🚚 Update\n📦 {awb}\n📍 {update}"
                 )
 
-                send_whatsapp_message(user, message)
-
-                cursor.execute("""
-                UPDATE tracking
-                SET last_update=?
-                WHERE awb=?
-                """, (update, awb))
+                cursor.execute(
+                    "UPDATE tracking SET last_update=? WHERE awb=?",
+                    (update,awb)
+                )
 
                 conn.commit()
 
@@ -324,7 +397,7 @@ def check_updates():
 
                 send_whatsapp_message(
                     user,
-                    f"✅ *Delivered*\n📦 {awb}"
+                    f"✅ Delivered\n📦 {awb}"
                 )
 
                 cursor.execute(
@@ -335,16 +408,14 @@ def check_updates():
                 conn.commit()
 
         except Exception as e:
-            print("Tracking error:", e)
+            print(e)
 
 
-# ================= SCHEDULER =================
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(check_updates, "interval", minutes=20)
+scheduler=BackgroundScheduler()
+scheduler.add_job(check_updates,"interval",minutes=20)
 scheduler.start()
 
 
 @app.get("/")
 def home():
-    return {"status": "running"}
+    return {"running":True}
