@@ -29,7 +29,6 @@ last_update TEXT
 )
 """)
 
-# prevent duplicate webhook execution
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS processed_messages(
 id TEXT PRIMARY KEY
@@ -57,17 +56,13 @@ def send_message(to, message):
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
-        "text": {
-            "preview_url": False,
-            "body": message
-        }
+        "text": {"preview_url": False, "body": message}
     }
 
     r = requests.post(url, headers=headers, json=data)
 
     if r.status_code != 200:
         print("WhatsApp Error:", r.text)
-
 
 # ================= SHIPMOZO =================
 
@@ -76,28 +71,23 @@ def shipmozo_track(awb):
     url = f"https://webparex.in/public/api/customer/btp/track-order?tracking_number={awb}&public_key=&type=awb_number&from=WEB"
 
     r = requests.get(url, timeout=15)
-
     data = r.json()
 
     shipment = data.get("data", [])
-
     if not shipment:
         return []
 
     scans_raw = shipment[0].get("scan", [])
-
     scans = []
 
     for s in scans_raw:
-
         scans.append({
-            "status": s.get("status", "").strip(),
-            "location": s.get("location", ""),
+            "status": s.get("status","").strip(),
+            "location": s.get("location",""),
             "date": f"{s.get('date','')} {s.get('time','')}"
         })
 
     return scans
-
 
 # ================= DELHIVERY =================
 
@@ -112,10 +102,12 @@ def delhivery_track(awb):
     url = f"https://dlv-api.delhivery.com/v3/unified-tracking-new?wbn={awb}"
 
     r = requests.get(url, headers=headers, timeout=15)
-
     data = r.json()
 
-    states = data["data"][0]["trackingStates"]
+    try:
+        states = data["data"][0]["trackingStates"]
+    except:
+        return []
 
     scans = []
 
@@ -123,13 +115,12 @@ def delhivery_track(awb):
         if s.get("scans"):
             for scan in s["scans"]:
                 scans.append({
-                    "status": scan.get("scan"),
-                    "location": scan.get("scannedLocation"),
-                    "date": s.get("date")
+                    "status": scan.get("scan",""),
+                    "location": scan.get("scannedLocation",""),
+                    "date": s.get("date","")
                 })
 
     return scans
-
 
 # ================= FORMAT =================
 
@@ -137,7 +128,7 @@ def format_history(awb, scans):
 
     msg = f"📦 *Tracking History*\nAWB: {awb}\n\n"
 
-    for s in scans[::-1]:
+    for s in scans:
 
         msg += (
             f"━━━━━━━━━━━━━━\n"
@@ -148,14 +139,11 @@ def format_history(awb, scans):
 
     return msg
 
-
 # ================= CHECK UPDATES =================
 
 def check_updates():
 
-    rows = cursor.execute(
-        "SELECT * FROM tracking"
-    ).fetchall()
+    rows = cursor.execute("SELECT * FROM tracking").fetchall()
 
     for user, awb, service, last in rows:
 
@@ -167,11 +155,13 @@ def check_updates():
                 else delhivery_track(awb)
             )
 
-            # API sometimes fails
             if not scans:
                 continue
 
-            latest = str(scans[-1])
+            latest_scan = scans[-1]
+
+            # better comparison
+            latest = latest_scan.get("status","") + latest_scan.get("date","")
 
             if latest != last:
 
@@ -179,41 +169,41 @@ def check_updates():
                     "UPDATE tracking SET last_update=? WHERE awb=?",
                     (latest, awb)
                 )
-
                 conn.commit()
 
                 msg = (
                     f"🚚 *Shipment Update*\n\n"
                     f"AWB: {awb}\n"
-                    f"📍 {scans[-1].get('location','')}\n"
-                    f"✅ {scans[-1].get('status','')}\n"
-                    f"🕒 {scans[-1].get('date','')}"
+                    f"📍 {latest_scan.get('location','')}\n"
+                    f"✅ {latest_scan.get('status','')}\n"
+                    f"🕒 {latest_scan.get('date','')}"
                 )
 
                 send_message(user, msg)
 
-                # safer delivered detection
-                if "DELIVERED" in latest.upper():
-
+                if "DELIVERED" in latest_scan.get("status","").upper():
                     cursor.execute(
                         "DELETE FROM tracking WHERE awb=?",
                         (awb,)
                     )
-
                     conn.commit()
 
         except Exception as e:
             print("Tracking error:", e)
 
-
-# ================= SCHEDULER =================
+# ================= SCHEDULER (RENDER SAFE) =================
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(check_updates, "interval", minutes=20)
 
-if not scheduler.running:
+@app.on_event("startup")
+def start_scheduler():
+    scheduler.add_job(check_updates, "interval", minutes=15)
     scheduler.start()
+    print("Scheduler started")
 
+@app.on_event("shutdown")
+def shutdown_scheduler():
+    scheduler.shutdown()
 
 # ================= VERIFY =================
 
@@ -227,7 +217,6 @@ def verify(request: Request):
 
     return "Error"
 
-
 # ================= RECEIVE =================
 
 @app.post("/webhook")
@@ -238,13 +227,11 @@ async def receive(req: Request):
     try:
         value = data["entry"][0]["changes"][0]["value"]
 
-        # ignore status updates
         if "messages" not in value:
             return "ok"
 
         msg = value["messages"][0]
 
-        # duplicate protection
         message_id = msg.get("id")
 
         exist = cursor.execute(
@@ -267,54 +254,37 @@ async def receive(req: Request):
         sender = msg["from"]
         text = msg["text"]["body"].lower().strip()
 
-    except Exception as e:
-        print("Webhook parse error:", e)
+    except:
         return "ok"
 
-    print("Incoming:", text)
-
-# ---------- TRACK ----------
+    # ---------- TRACK ----------
 
     if text == "track":
-
         user_state[sender] = "choose"
-
         send_message(
             sender,
             "📦 *Start Tracking*\n\nChoose courier:\n🚚 shipmozo\n🚛 delhivery"
         )
-
         return "ok"
 
-# ---------- FLOW ----------
+    # ---------- FLOW ----------
 
     if sender in user_state:
 
         if user_state[sender] == "choose":
 
-            if text not in ["shipmozo", "delhivery"]:
-                send_message(sender, "❌ Invalid courier")
+            if text not in ["shipmozo","delhivery"]:
+                send_message(sender,"❌ Invalid courier")
                 return "ok"
 
             user_state[sender] = text
-
-            send_message(sender, "📦 Send Tracking Number")
-
+            send_message(sender,"📦 Send Tracking Number")
             return "ok"
 
         else:
 
             service = user_state[sender]
             awb = text
-
-            exist = cursor.execute(
-                "SELECT awb FROM tracking WHERE awb=?",
-                (awb,)
-            ).fetchone()
-
-            if exist:
-                send_message(sender, "⚠ Already tracking")
-                return "ok"
 
             scans = (
                 shipmozo_track(awb)
@@ -323,28 +293,23 @@ async def receive(req: Request):
             )
 
             if not scans:
-                send_message(sender, "❌ Tracking not found")
+                send_message(sender,"❌ Tracking not found")
                 return "ok"
 
-            cursor.execute(
-                "INSERT INTO tracking VALUES(?,?,?,?)",
-                (sender, awb, service, str(scans[-1]))
-            )
+            latest = scans[-1].get("status","") + scans[-1].get("date","")
 
+            cursor.execute(
+                "INSERT OR REPLACE INTO tracking VALUES(?,?,?,?)",
+                (sender, awb, service, latest)
+            )
             conn.commit()
 
-            send_message(sender, "⏳ Fetching shipment history...")
-
-            send_message(
-                sender,
-                format_history(awb, scans)
-            )
+            send_message(sender,format_history(awb, scans))
 
             del user_state[sender]
-
             return "ok"
 
-# ---------- LIST ----------
+    # ---------- LIST ----------
 
     if text == "list":
 
@@ -354,71 +319,35 @@ async def receive(req: Request):
         ).fetchall()
 
         if not rows:
-            send_message(sender, "📭 No active tracking")
+            send_message(sender,"📭 No active tracking")
             return "ok"
 
         msg = "📦 Active Shipments\n\n"
-
-        for a, s in rows:
+        for a,s in rows:
             msg += f"• {a} ({s})\n"
 
-        send_message(sender, msg)
-
+        send_message(sender,msg)
         return "ok"
-
-# ---------- HISTORY ----------
 
     # ---------- HISTORY ----------
 
     if text.startswith("history"):
-    
+
         try:
             awb = text.split()[1]
         except:
-            send_message(sender, "Usage:\nhistory AWB")
+            send_message(sender,"Usage:\nhistory AWB")
             return "ok"
-    
-        # try database first
-        row = cursor.execute(
-            "SELECT service FROM tracking WHERE awb=?",
-            (awb,)
-        ).fetchone()
-    
-        service = None
-    
-        if row:
-            service = row[0]
-    
-        # auto fallback detection
-        if not service:
-    
-            try:
-                scans = shipmozo_track(awb)
-                if scans:
-                    send_message(sender, format_history(awb, scans))
-                    return "ok"
-            except:
-                pass
-    
-            try:
-                scans = delhivery_track(awb)
-                if scans:
-                    send_message(sender, format_history(awb, scans))
-                    return "ok"
-            except:
-                pass
-    
-            send_message(sender, "❌ Tracking not found")
+
+        scans = shipmozo_track(awb)
+        if not scans:
+            scans = delhivery_track(awb)
+
+        if not scans:
+            send_message(sender,"❌ Tracking not found")
             return "ok"
-    
-        scans = (
-            shipmozo_track(awb)
-            if service == "shipmozo"
-            else delhivery_track(awb)
-        )
-    
-        send_message(sender, format_history(awb, scans))
-    
+
+        send_message(sender,format_history(awb, scans))
         return "ok"
-        
+
     return "ok"
